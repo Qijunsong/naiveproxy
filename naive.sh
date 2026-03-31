@@ -667,13 +667,31 @@ optimize(){
 }
 
 cert_renew(){
-    netstat -nltp |grep ":80 "
-    if [[ $? == '0' ]]; then
-        echo
-        echo -e "$red 请手动关闭80端口的服务再操作$none"
-    else
-        certbot renew
+    echo -e "$yellow 正在准备续签证书...$none"
+    
+    # 检查是否有 Nginx 正在运行，如果有则临时停止
+    if systemctl is-active --quiet nginx; then
+        echo -e "$cyan 检测到 Nginx 正在运行，暂时停止它以释放 80 端口...$none"
+        systemctl stop nginx
+        NGINX_STOPPED=true
     fi
+
+    # 停止 Naive (Caddy) 以防万一它也占用了端口
+    systemctl stop naive
+    
+    # 执行续签
+    certbot renew
+
+    # 重启 Naive (Caddy)
+    systemctl start naive
+    
+    # 如果刚才停止了 Nginx，现在把它重新拉起来
+    if [[ "$NGINX_STOPPED" == true ]]; then
+        echo -e "$cyan 续签完成，正在恢复 Nginx 服务...$none"
+        systemctl start nginx
+    fi
+    
+    echo -e "$green 证书续签流程结束！$none"
 }
 
 shell_renew(){
@@ -699,11 +717,17 @@ add_cron() {
     echo 
     echo "........... 证书自动更新  .........."
     cat > /etc/caddy/.renew.sh << EOF
-    
 #!/usr/bin/env bash
+# 临时停止可能的占用服务
 systemctl stop naive
+systemctl is-active --quiet nginx && systemctl stop nginx && NGINX_STOPPED=true
+
+# 执行续签
 certbot renew
+
+# 恢复服务
 systemctl start naive
+[[ "\$NGINX_STOPPED" == true ]] && systemctl start nginx
 EOF
     chmod +x /etc/caddy/.renew.sh
     if [ `grep -c "caddy" /var/spool/cron/root` -lt '1' ];then
@@ -714,7 +738,6 @@ EOF
     crontab -l
     echo 
     echo "........... 证书自动更新设置完成  .........."
-    crontab -l
 }
 
 allow_port() {
