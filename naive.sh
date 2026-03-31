@@ -20,22 +20,10 @@ cmd="apt-get"
 sys_bit=$(uname -m)
 
 case $sys_bit in
-# i[36]86)
-#     v2ray_bit="32"
-#     caddy_arch="386"
-#     ;;
 'amd64' | x86_64)
     v2ray_bit="64"
     caddy_arch="amd64"
     ;;
-# *armv6*)
-#     v2ray_bit="arm32-v6"
-#     caddy_arch="arm6"
-#     ;;
-# *armv7*)
-#     v2ray_bit="arm32-v7a"
-#     caddy_arch="arm7"
-#     ;;
 *aarch64* | *armv8*)
     v2ray_bit="arm64-v8a"
     caddy_arch="arm64"
@@ -73,7 +61,6 @@ fi
 
 uuid=$(cat /proc/sys/kernel/random/uuid)
 systemd=true
-# _test=true
 
 _sys_timezone() {
     IS_OPENVZ=
@@ -211,14 +198,6 @@ install_info() {
 }
 
 domain_check() {
-    # if [[ $cmd == "yum" ]]; then
-    #     yum install bind-utils -y
-    # else
-    #     $cmd install dnsutils -y
-    # fi
-    # test_domain=$(dig $domain +short)
-    # test_domain=$(ping $domain -c 1 -4 | grep -oE -m1 "([0-9]{1,3}\.){3}[0-9]{1,3}")
-    # test_domain=$(wget -qO- --header='accept: application/dns-json' "https://cloudflare-dns.com/dns-query?name=$domain&type=A" | grep -oE "([0-9]{1,3}\.){3}[0-9]{1,3}" | head -1)
     test_domain=$(curl -sH 'accept: application/dns-json' "https://cloudflare-dns.com/dns-query?name=$domain&type=A" | grep -oE "([0-9]{1,3}\.){3}[0-9]{1,3}" | head -1)
     echo $ip_all | grep $test_domain
     if [[ $? != '0' ]]; then
@@ -231,40 +210,22 @@ domain_check() {
         echo
         echo "备注...如果你的域名是使用 Cloudflare 解析的话..在 Status 那里点一下那图标..让它变灰"
         echo
-        # exit 1
-    fi
-}
-
-install_go() {
-    cd /opt
-    rm /opt/go1.21.7.linux-${caddy_arch}.tar.gz -rf
-    wget https://go.dev/dl/go1.21.7.linux-${caddy_arch}.tar.gz
-    tar -zxf go1.21.7.linux-${caddy_arch}.tar.gz -C /usr/local/
-    echo export GOROOT=/usr/local/go >> /etc/profile
-    echo export PATH=$GOROOT/bin:$PATH >> /etc/profile
-    source /etc/profile
-    export GOROOT=/usr/local/go
-    export PATH=$GOROOT/bin:$PATH
-    go version
-    if [[ $? != '0' ]]; then
-        echo
-        echo "Golang安装失败，请确认机器内存>512M以及空余空间>5G"
-        exit 1
     fi
 }
 
 install_caddy() {
-    # download caddy file then install
-    mkdir /root/src 
+    mkdir -p /root/src 
     cd /root/src/
-    rm caddy-forwardproxy-naive.tar.xz
-    wget https://github.com/klzgrad/forwardproxy/releases/download/v2.7.5-caddy2-naive2/caddy-forwardproxy-naive.tar.xz
+    rm -rf caddy-forwardproxy-naive.tar.xz caddy-forwardproxy-naive
+    
+    wget https://github.com/klzgrad/forwardproxy/releases/latest/download/caddy-forwardproxy-naive.tar.xz
     tar xvf caddy-forwardproxy-naive.tar.xz 
+    
     systemctl stop naive
     \cp caddy-forwardproxy-naive/caddy /usr/bin/
-    /usr/bin/caddy version        # 2022-4-8 23:09
-    #v2.4.6 h1:HGkGICFGvyrodcqOOclHKfvJC0qTU7vny/7FhYp9hNw=  
-    setcap cap_net_bind_service=+ep /usr/bin/caddy  # 设置bind权限，可443
+    /usr/bin/caddy version 
+    
+    setcap cap_net_bind_service=+ep /usr/bin/caddy
 }
 
 
@@ -279,15 +240,16 @@ install_certbot() {
         $cmd install -y lrzsz git zip unzip curl wget qrencode libcap2-bin tar 
         $cmd install -y certbot
     else
-        # $cmd install -y lrzsz git zip unzip curl wget qrencode libcap iptables-services
         $cmd install -y lrzsz git zip unzip curl wget qrencode libcap epel-release tar openssl-devel ca-certificates
         $cmd install -y certbot
     fi
 }
 
-
 caddy_config() {
     password=$uuid
+    
+    # 【修复重点】生成 v2.10.0 所需的双重 Base64 编码凭证
+    auth_str=$(echo -n "User:$password" | base64 | tr -d '\n' | base64 | tr -d '\n')
 
     cat > /etc/caddy/caddy_config.json << EOF
 {
@@ -310,8 +272,9 @@ caddy_config() {
                     {
                       "handle": [
                         {
-                          "auth_user_deprecated": "User",
-                          "auth_pass_deprecated": "$password",
+                          "auth_credentials": [
+                            "$auth_str"
+                          ],
                           "handler": "forward_proxy",
                           "hide_ip": true,
                           "hide_via": true,
@@ -410,20 +373,16 @@ EOF
 
 config() {
     mkdir -p /etc/ssl/caddy
-    # 存放Caddyfile的目录
-    mkdir /etc/caddy/
-    mkdir /var/www/ -p
+    mkdir -p /etc/caddy/
+    mkdir -p /var/www/
 
     wget -c https://raw.githubusercontent.com/imajeason/nas_tools/main/NaiveProxy/html.tar.gz -O - | tar -xz -C /var/www/
-    # 生成密码
-    # /etc/letsencrypt/live/x.dongvps.com/
 
     if [[ $(ls /etc/letsencrypt/live/ | pgrep "$domain") ]] ;then
         certbot renew
     else
         certbot certonly --standalone -d $domain --agree-to --email $email
     fi
-    # 生成json
 
     ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
     _sys_timezone
@@ -433,28 +392,26 @@ config() {
 
 
 edit_config() {
-    # 修改端口
     domain=`egrep 'domain' /etc/caddy/.autoconfig | awk -F'=' '{print $2}'`
     user=`egrep 'user' /etc/caddy/.autoconfig | awk -F'=' '{print $2}'`
     password=`egrep 'password' /etc/caddy/.autoconfig | awk -F'=' '{print $2}'`
     naive_port=`egrep 'port' /etc/caddy/.autoconfig | awk -F'=' '{print $2}'`
     email=`egrep 'email' /etc/caddy/.autoconfig | awk -F'=' '{print $2}'`
 
-    # 修改端口
     echo -e "请输入 "$yellow"NaiveProxy"$none" 端口 ["$magenta"1-65535"$none"]，不能选择 "$magenta"80"$none"端口"
     read -p "$(echo -e "(当前端口: ${cyan}${naive_port}$none):")" naive_port1
     [ -z "$naive_port1" ] || naive_port=$naive_port1
 
-    # 修改用户名
     echo -e "请输入 "$yellow"NaiveProxy"$none" 用户名，支持A-Za-z_0-9，不能是汉字"
     read -p "$(echo -e "(当前用户名: ${cyan}${user}$none):")" user1
     [ -z "$user1" ] || user=$user1
 
-    # 修改密码
     echo -e "请输入 "$yellow"NaiveProxy"$none" 密码，支持A-Za-z_0-9，不能是汉字"
     read -p "$(echo -e "(当前密码: ${cyan}${password}$none):")" password1
     [ -z "$password1" ] || password=$password1
-    # 输入端口
+    
+    # 【修复重点】生成 v2.10.0 所需的双重 Base64 编码凭证
+    auth_str=$(echo -n "$user:$password" | base64 | tr -d '\n' | base64 | tr -d '\n')
     
     cat > /etc/caddy/caddy_config.json << EOF
 {
@@ -477,8 +434,9 @@ edit_config() {
                     {
                       "handle": [
                         {
-                          "auth_user_deprecated": "$user",
-                          "auth_pass_deprecated": "$password",
+                          "auth_credentials": [
+                            "$auth_str"
+                          ],
                           "handler": "forward_proxy",
                           "hide_ip": true,
                           "hide_via": true,
@@ -559,8 +517,6 @@ EOF
     netstat -nltp |grep caddy
 
     cat /etc/caddy/.autoconfig
-
-
 }
 
 
@@ -575,18 +531,14 @@ get_ip() {
     ipv6=`ip a | grep inet6 |grep global | awk '{print $2}' | awk -F '/' '{print $1}'`
     [[ -z $ipv4 ]] && [[ -z $ipv6 ]] && echo -e "\n$red 未检测到ipv4地址与ipv6地址！$none\n" && exit
 
-
     ip_all="$ipv4 $ipv6"
 }
 
 error() {
-
     echo -e "\n$red 输入错误！$none\n"
-
 }
 
 pause() {
-
     read -rsp "$(echo -e "按 $green Enter 回车键 $none 继续....或按 $red Ctrl + C $none 取消.")" -d $'\n'
     echo
 }
@@ -599,7 +551,6 @@ do_service() {
 }
 show_config_info() {
     clear
-    # mkdir -p .local/share/caddy/config
     echo > /etc/caddy/.autoconfig
     echo -e "域名domain   =$domain" >> /etc/caddy/.autoconfig
     echo -e "端口port     =$naive_port" >> /etc/caddy/.autoconfig
@@ -610,25 +561,10 @@ show_config_info() {
     echo "........... Naiveproxy 配置信息  .........."
     echo
     cat /etc/caddy/.autoconfig
-
 }
 
 update_caddy() {
-    # edit_config
-    # export GOROOT=/usr/local/go
-    # export PATH=$GOROOT/bin:$PATH
     install_caddy
-
-    ## bbr
-    # _load bbr.sh
-    # _try_enable_bbr
-
-    #config
-    #caddy_config
-
-    #get_ip
-    #add_cron
-
 }
 
 install() {
@@ -651,14 +587,10 @@ install() {
         2)
             echo " 更新Caddy..."
             do_service stop naive
-
-            #update caddy
             update_caddy
-
-            do_service start naive
-            cat /etc/caddy/.autoconfig
-            # keep config
-            
+            # 使用现有配置重载，这里调用一次 edit_config 来修复旧版遗留的 JSON 格式
+            echo -e "$yellow 检测到更新，正在适配最新版配置格式...$none"
+            edit_config
             break
             exit 0
             ;;
@@ -666,19 +598,13 @@ install() {
             exit 1
             ;;
         esac
-        
     fi
-    # 安装依赖以及certbot命令
-     
     
-    # 配置代理信息，比如域名
     naive_config
-    # blocked_hosts
     install_info
-    # [[ $caddy ]] && domain_check
     allow_port
     install_certbot
-    # install_go
+    
     if [[ $caddy || $v2ray_port == "443" ]]; then
         if [[ $cmd == "yum" ]]; then
             [[ $(pgrep "nginx") ]] && do_service stop nginx
@@ -690,25 +616,15 @@ install() {
             [[ $(command -v apache2) ]] && apt-get remove apache2* -y
         fi
     fi
+    
     install_caddy
-
-    ## bbr
-    # _load bbr.sh
-    # _try_enable_bbr
-
-
     config
     caddy_config
-
-
     get_ip
     add_cron
-    
     show_config_info
-    # do_service restart naive
 }
 
-# 卸载
 uninstall_naive() {
     do_service disable naive
     do_service stop naive
@@ -720,8 +636,6 @@ $green naiveproxy卸载完成none
         " && exit 1
 }
 
-
-# 停止服务
 stop_naive() {
     if [[ -f /usr/bin/caddy && -f /etc/caddy/caddy_config.json ]]; then
         do_service disable naive
@@ -749,7 +663,6 @@ show_cert(){
 optimize(){
     curl https://raw.githubusercontent.com/imajeason/nas_tools/main/NaiveProxy/optimize.sh | bash -
     curl https://github.com/teddysun/across/raw/master/bbr.sh | bash -
-
 }
 
 cert_renew(){
@@ -759,12 +672,11 @@ cert_renew(){
         echo -e "$red 请手动关闭80端口的服务再操作$none"
     else
         certbot renew
-        # exit 1
     fi
 }
 
 shell_renew(){
-    curl -o /root/.naive.sh https://raw.githubusercontent.com/imajeason/nas_tools/main/NaiveProxy/naive.sh 
+    curl -o /root/.naive.sh https://raw.githubusercontent.com/Qijunsong/naiveproxy/main/naive.sh 
     chmod +x /root/.naive.sh
     echo
     echo -e "$red naive更新完成，请重新执行naive $none"
@@ -799,35 +711,27 @@ EOF
         echo "0 1 * * * /etc/caddy/.renew.sh" >> /var/spool/cron/root
     fi
     crontab -l
-    # crontab -l > /tmp/conf && echo "0 1 * * * /etc/caddy/.renew.sh" >> /tmp/conf && crontab /tmp/conf && rm -f /tmp/conf
     echo 
     echo "........... 证书自动更新设置完成  .........."
     crontab -l
 }
 
 allow_port() {
-
     if [[ $(command -v yum) ]]; then
         firewall-cmd --zone=public --add-port=80/tcp --permanent
-
         firewall-cmd --zone=public --add-port=$naive_port/tcp --permanent
         firewall-cmd --zone=public --add-port=$naive_port/udp --permanent
         firewall-cmd --reload
-
     fi
     if [[ $(command -v apt-get) ]]; then
         iptables -I INPUT -p tcp --dport 80 -j ACCEPT
-
         iptables -I INPUT -p tcp --dport $naive_port -j ACCEPT
         iptables -I INPUT -p udp --dport $naive_port -j ACCEPT
         iptables-save
-
     fi
     echo 
     echo "........... 防火墙已开放端口$naive_port  .........."
 }
-
-
 
 
 while :; do
@@ -899,4 +803,3 @@ while :; do
         error
     esac
 done
-# 脚本结束
