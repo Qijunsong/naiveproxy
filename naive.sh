@@ -12,11 +12,10 @@ _yellow() { echo -e ${yellow}$*${none}; }
 _magenta() { echo -e ${magenta}$*${none}; }
 _cyan() { echo -e ${cyan}$*${none}; }
 
-# Root
+# Root权限检测
 [[ $(id -u) != 0 ]] && echo -e "\n 哎呀……请使用 ${red}root ${none}用户运行 ${yellow}~(^_^) ${none}\n" && exit 1
 
 cmd="apt-get"
-
 sys_bit=$(uname -m)
 
 case $sys_bit in
@@ -37,26 +36,20 @@ case $sys_bit in
     ;;
 esac
 
-# 笨笨的检测方法
+# 简单的包管理器检测
 if [[ $(command -v apt-get) || $(command -v yum) ]] && [[ $(command -v systemctl) ]]; then
-
     if [[ $(command -v yum) ]]; then
-
         cmd="yum"
-
     fi
     if [[ $(command -v apt-get) ]]; then
         cmd="apt-get"
     fi
-
 else
-
     echo -e " 
     哈哈……这个 ${red}辣鸡脚本${none} 不支持你的系统。 ${yellow}(-_-) ${none}
 
     备注: 仅支持 Ubuntu 16+ / Debian 8+ / CentOS 7+ 系统
     " && exit 1
-
 fi
 
 uuid=$(cat /proc/sys/kernel/random/uuid)
@@ -90,9 +83,7 @@ _sys_time() {
 }
 
 naive_config() {
-
     echo
-
     while :; do
         echo -e "请输入 "$yellow"NaiveProxy"$none" 端口 ["$magenta"1-65535"$none"]，不能选择 "$magenta"80"$none"端口"
         read -p "$(echo -e "(默认端口: ${cyan}443$none):")" naive_port
@@ -152,7 +143,6 @@ naive_config() {
     echo
 
     while :; do
-
         read -p "$(echo -e "(是否已经正确解析: [${magenta}Y$none]):") " record
         if [[ -z "$record" ]]; then
             error
@@ -169,11 +159,8 @@ naive_config() {
                 error
             fi
         fi
-
     done
-
 }
-
 
 install_info() {
     clear
@@ -189,7 +176,6 @@ install_info() {
     echo -e "$yellow 域名解析 = ${cyan}我确定已经有解析了$none"
     echo
     echo -e "$yellow 解析到$test_domain$none"
-
     echo
     echo "---------- END -------------"
     echo
@@ -218,6 +204,7 @@ install_caddy() {
     cd /root/src/
     rm -rf caddy-forwardproxy-naive.tar.xz caddy-forwardproxy-naive
     
+    # 使用动态拉取 Github Latest 预编译包
     wget https://github.com/klzgrad/forwardproxy/releases/latest/download/caddy-forwardproxy-naive.tar.xz
     tar xvf caddy-forwardproxy-naive.tar.xz 
     
@@ -227,7 +214,6 @@ install_caddy() {
     
     setcap cap_net_bind_service=+ep /usr/bin/caddy
 }
-
 
 install_certbot() {
     grep "Emerald Puma" /etc/os-release
@@ -379,18 +365,28 @@ config() {
     # 替换为你自己的仓库链接
     wget -c https://raw.githubusercontent.com/Qijunsong/naiveproxy/main/html.tar.gz -O - | tar -xz -C /var/www/
 
+    # 申请证书时检测并处理 Nginx 冲突
+    if systemctl is-active --quiet nginx; then
+        echo -e "$cyan 检测到 Nginx 正在运行，暂时停止它以释放 80 端口申请证书...$none"
+        systemctl stop nginx
+        NGINX_STOPPED=true
+    fi
+
     if [[ $(ls /etc/letsencrypt/live/ | pgrep "$domain") ]] ;then
         certbot renew
     else
         certbot certonly --standalone -d $domain --agree-to --email $email
     fi
 
+    if [[ "$NGINX_STOPPED" == true ]]; then
+        echo -e "$cyan 证书申请完成，正在恢复 Nginx 服务...$none"
+        systemctl start nginx
+    fi
+
     ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
     _sys_timezone
     _sys_time
-
 }
-
 
 edit_config() {
     domain=`egrep 'domain' /etc/caddy/.autoconfig | awk -F'=' '{print $2}'`
@@ -520,7 +516,6 @@ EOF
     cat /etc/caddy/.autoconfig
 }
 
-
 get_ip() {
     ipv4=$(curl -s https://ipinfo.io/ip)
     [[ -z $ipv4 ]] && ipv4=$(curl -s https://api.ipify.org)
@@ -543,6 +538,7 @@ pause() {
     read -rsp "$(echo -e "按 $green Enter 回车键 $none 继续....或按 $red Ctrl + C $none 取消.")" -d $'\n'
     echo
 }
+
 do_service() {
     if [[ $systemd ]]; then
         systemctl $1 $2 $3
@@ -550,6 +546,7 @@ do_service() {
         service $2 $1
     fi
 }
+
 show_config_info() {
     clear
     echo > /etc/caddy/.autoconfig
@@ -605,17 +602,7 @@ install() {
     allow_port
     install_certbot
     
-    if [[ $caddy || $v2ray_port == "443" ]]; then
-        if [[ $cmd == "yum" ]]; then
-            [[ $(pgrep "nginx") ]] && do_service stop nginx
-            [[ $(command -v nginx) ]] && yum remove nginx -y
-            [[ $(pgrep "httpd") ]] && do_service stop httpd
-            [[ $(command -v httpd) ]] && yum remove httpd -y
-        else
-            [[ $(pgrep "apache2") ]] && service apache2 stop
-            [[ $(command -v apache2) ]] && apt-get remove apache2* -y
-        fi
-    fi
+    # 移除了原本会强制卸载 Nginx/Apache 的粗暴代码，保留用户的 Web 环境
     
     install_caddy
     config
@@ -666,26 +653,20 @@ optimize(){
     curl https://github.com/teddysun/across/raw/master/bbr.sh | bash -
 }
 
+# 优化后的手动证书续签，智能绕开 Nginx 冲突
 cert_renew(){
     echo -e "$yellow 正在准备续签证书...$none"
     
-    # 检查是否有 Nginx 正在运行，如果有则临时停止
     if systemctl is-active --quiet nginx; then
         echo -e "$cyan 检测到 Nginx 正在运行，暂时停止它以释放 80 端口...$none"
         systemctl stop nginx
         NGINX_STOPPED=true
     fi
 
-    # 停止 Naive (Caddy) 以防万一它也占用了端口
     systemctl stop naive
-    
-    # 执行续签
     certbot renew
-
-    # 重启 Naive (Caddy)
     systemctl start naive
     
-    # 如果刚才停止了 Nginx，现在把它重新拉起来
     if [[ "$NGINX_STOPPED" == true ]]; then
         echo -e "$cyan 续签完成，正在恢复 Nginx 服务...$none"
         systemctl start nginx
@@ -694,6 +675,7 @@ cert_renew(){
     echo -e "$green 证书续签流程结束！$none"
 }
 
+# 替换为你自己的仓库链接
 shell_renew(){
     curl -o /root/.naive.sh https://raw.githubusercontent.com/Qijunsong/naiveproxy/main/naive.sh 
     chmod +x /root/.naive.sh
@@ -713,19 +695,17 @@ show_config() {
     cat /etc/caddy/.autoconfig
 }
 
+# 优化后的自动证书续签，智能绕开 Nginx 冲突
 add_cron() {
     echo 
     echo "........... 证书自动更新  .........."
     cat > /etc/caddy/.renew.sh << EOF
 #!/usr/bin/env bash
-# 临时停止可能的占用服务
 systemctl stop naive
 systemctl is-active --quiet nginx && systemctl stop nginx && NGINX_STOPPED=true
 
-# 执行续签
 certbot renew
 
-# 恢复服务
 systemctl start naive
 [[ "\$NGINX_STOPPED" == true ]] && systemctl start nginx
 EOF
@@ -756,7 +736,6 @@ allow_port() {
     echo 
     echo "........... 防火墙已开放端口$naive_port  .........."
 }
-
 
 while :; do
     echo
