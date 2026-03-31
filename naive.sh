@@ -248,8 +248,8 @@ install_certbot() {
 caddy_config() {
     password=$uuid
     
-    # 【修复重点】生成 v2.10.0 所需的双重 Base64 编码凭证
-    auth_str=$(echo -n "User:$password" | base64 | tr -d '\n' | base64 | tr -d '\n')
+    # 终极修复：使用更稳妥的 printf 生成 v2.10.0 所需的双重 Base64 编码凭证
+    auth_str=$(printf "User:%s" "$password" | base64 | tr -d '\n' | base64 | tr -d '\n')
 
     cat > /etc/caddy/caddy_config.json << EOF
 {
@@ -376,7 +376,8 @@ config() {
     mkdir -p /etc/caddy/
     mkdir -p /var/www/
 
-    wget -c https://raw.githubusercontent.com/imajeason/nas_tools/main/NaiveProxy/html.tar.gz -O - | tar -xz -C /var/www/
+    # 替换为你自己的仓库链接
+    wget -c https://raw.githubusercontent.com/Qijunsong/naiveproxy/main/html.tar.gz -O - | tar -xz -C /var/www/
 
     if [[ $(ls /etc/letsencrypt/live/ | pgrep "$domain") ]] ;then
         certbot renew
@@ -410,8 +411,8 @@ edit_config() {
     read -p "$(echo -e "(当前密码: ${cyan}${password}$none):")" password1
     [ -z "$password1" ] || password=$password1
     
-    # 【修复重点】生成 v2.10.0 所需的双重 Base64 编码凭证
-    auth_str=$(echo -n "$user:$password" | base64 | tr -d '\n' | base64 | tr -d '\n')
+    # 终极修复：使用更稳妥的 printf 生成 v2.10.0 所需的双重 Base64 编码凭证
+    auth_str=$(printf "%s:%s" "$user" "$password" | base64 | tr -d '\n' | base64 | tr -d '\n')
     
     cat > /etc/caddy/caddy_config.json << EOF
 {
@@ -588,7 +589,6 @@ install() {
             echo " 更新Caddy..."
             do_service stop naive
             update_caddy
-            # 使用现有配置重载，这里调用一次 edit_config 来修复旧版遗留的 JSON 格式
             echo -e "$yellow 检测到更新，正在适配最新版配置格式...$none"
             edit_config
             break
@@ -661,7 +661,8 @@ show_cert(){
 }
 
 optimize(){
-    curl https://raw.githubusercontent.com/imajeason/nas_tools/main/NaiveProxy/optimize.sh | bash -
+    # 替换为你自己的仓库链接
+    curl https://raw.githubusercontent.com/Qijunsong/naiveproxy/main/optimize.sh | bash -
     curl https://github.com/teddysun/across/raw/master/bbr.sh | bash -
 }
 
